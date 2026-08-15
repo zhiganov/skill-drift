@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "$comment": [
+    "EXAMPLE manifest. Replace the entries with your own; the roots below are the defaults.",
+    "Paths are relative to THIS file's directory unless they start with ~ (home) or are absolute.",
+    "Skills under roots.own.skillsSubdir with no entry here default to class 'local'.",
+    "Skills installed by `npx skills` are discovered from roots.agentsLock and need no entry.",
+    "Classes: local | vendored | npm | git-repo | cli"
+  ],
+  "roots": {
+    "own": {
+      "repo": "..",
+      "skillsSubdir": "skills",
+      "remote": "origin",
+      "branch": "main"
+    },
+    "active": "~/.claude/skills",
+    "agentsLock": "~/.agents/.skill-lock.json",
+    "agentsSkills": "~/.agents/skills",
+    "extraSkills": ["~/.factory/skills", "~/.config/opencode/skills"],
+    "cache": "~/.claude/.skill-check-cache.json",
+    "cacheTtlHours": 24
+  },
+  "skills": {
+    "example-vendored-subdir": {
+      "class": "vendored",
+      "repo": "owner/repo",
+      "path": "skills/example/SKILL.md",
+      "ref": "0000000000000000000000000000000000000000",
+      "license": "MIT",
+      "note": "The common case. The skill owns its own upstream directory, so the whole subtree under dirname(path) is the install set — no `installs` needed.",
+      "update": "node scripts/vendor-skill.mjs --update example-vendored-subdir"
+    },
+    "example-vendored-at-repo-root": {
+      "class": "vendored",
+      "repo": "owner/single-skill-repo",
+      "path": "SKILL.md",
+      "installs": ["SKILL.md", "reference/", "LICENSE"],
+      "note": "The skill lives at the repo ROOT, so it is a SUBSET of that root — the repo also holds a README, a LICENSE and install scripts. `installs` is required here; without it the check would report the repo's own furniture as missing, and rather than guess it falls back to comparing SKILL.md alone and says so in the report.",
+      "update": "node scripts/vendor-skill.mjs --update example-vendored-at-repo-root"
+    },
+    "example-fork": {
+      "class": "vendored",
+      "derivative": true,
+      "repo": "owner/upstream-repo",
+      "path": "skills/thing/SKILL.md",
+      "syncedUpstreamVersion": "1.4.2",
+      "forkOmits": ["references/"],
+      "note": "A DERIVATIVE, not a copy — deliberately rewritten, so diffing its content is meaningless. The question is whether upstream moved past syncedUpstreamVersion. `forkOmits` records that this fork inlines upstream's references/ rather than carrying them as files. Set it only AFTER verifying the content genuinely matches: it silences the warning, so setting it early buries the gap it exists to reveal.",
+      "update": "read upstream at the new version, port what applies, then bump syncedUpstreamVersion"
+    },
+    "example-npm-cli": {
+      "class": "npm",
+      "location": "active",
+      "package": "some-cli",
+      "upstream": {
+        "repo": "owner/some-cli",
+        "path": ".claude/skills/some-cli/SKILL.md",
+        "tagPattern": "skill-v{version}"
+      },
+      "note": "The PACKAGE version and the SKILL version are often separate series, so compare skill-to-skill at the upstream repo. `tagPattern` pins the integrity check to the release tag for the INSTALLED version — comparing against HEAD flags every commit a maintainer makes between releases, which is a false alarm, not a finding.",
+      "update": "npx some-cli update",
+      "warn": "Some vendor CLIs execute on unrecognised flags rather than printing help. Probe with `<tool> help`, never `<tool> --help`."
+    },
+    "example-git-repo": {
+      "class": "git-repo",
+      "location": "active",
+      "repo": "owner/skill-repo",
+      "path": "SKILL.md",
+      "installs": ["SKILL.md", "reference/"],
+      "checkout": "../../skill-repo",
+      "update": "git -C <path>/skill-repo pull && ./install.sh"
+    },
+    "example-vendor-cli": {
+      "class": "cli",
+      "location": "active",
+      "vendor": "railway",
+      "update": "railway skills update --agent claude-code",
+      "state": { "file": "~/.railway/skills.json", "format": "railway" },
+      "warn": "Vendor CLIs that 'set up your coding agent' fan out across EVERY detected agent root by default (.claude, .agents, .config/opencode, .factory), installing where no copy existed. Scope the target unless all-agents is intended."
+    },
+    "example-local": {
+      "class": "local",
+      "note": "Authored here, no upstream. Checked only by the own-checkout git comparison. Note that absence of an entry defaults to this too — which means 'no upstream recorded' and 'no upstream exists' are currently indistinguishable."
+    }
+  },
+  "marketplace": {
+    "note": "Marketplace plugins self-heal on their own schedule. Deliberately not checked here.",
+    "checked": false
+  }
+}
