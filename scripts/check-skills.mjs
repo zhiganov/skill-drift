@@ -381,7 +381,7 @@ async function checkAgentsLock(lockPath, skillsDir) {
     return [{ name: path.basename(lockPath), class: 'cli-managed', status: 'unknown', detail: `unreadable lock: ${err.message}` }]
   }
   const rows = Object.entries(lock.skills ?? {})
-  return pool(rows, 5, async ([name, e]) => {
+  const checked = await pool(rows, 5, async ([name, e]) => {
     const base = {
       name,
       class: 'cli-managed',
@@ -433,6 +433,77 @@ async function checkAgentsLock(lockPath, skillsDir) {
       detail: `${r.data.length} commit${r.data.length === 1 ? '' : 's'} since ${String(since).slice(0, 10)} · latest: ${r.data[0].message}`,
     }
   })
+  return [...checked, ...(await danglingSiblings(rows, skillsDir))]
+}
+
+/**
+ * Skills an installed skill ROUTES TO that are not installed.
+ *
+ * Every other check here asks "is what I installed current?" and none asks "is what I
+ * installed coherent?". A vendor update can add a skill AND add pointers to it from skills
+ * you already have, which leaves live routing advice aimed at nothing. 2026-08-21: the
+ * firecrawl update gave `firecrawl-search` five references to `firecrawl-research-index`
+ * and `firecrawl-developer-index`, and pointed `firecrawl` at `firecrawl-parse` for local
+ * files — none of the three installed, and every row in this report was ✓.
+ *
+ * Diffed by upstream DIRECTORY, never by lock key: the two drift apart the moment a folder
+ * is renamed, which `firecrawl-cli` → `firecrawl` did on that same day.
+ *
+ * Deliberately reports ONLY the referenced ones. A vendor publishing twenty skills you
+ * chose not to install is a preference, not a defect, and listing all of them would be the
+ * noise this file avoids everywhere else. A referenced-but-absent skill is unambiguous:
+ * something installed is telling the agent to use a thing that is not there.
+ *
+ * Costs no extra network — `repoTree` is already cached per repo for the staleness check.
+ */
+async function danglingSiblings(rows, skillsDir) {
+  const bySource = new Map()
+  for (const [name, e] of rows) {
+    if (!e.source || !e.skillPath) continue
+    const parent = path.posix.dirname(path.posix.dirname(e.skillPath))
+    const key = `${e.source} ${parent}`
+    if (!bySource.has(key)) bySource.set(key, { source: e.source, parent, installed: new Set(), names: [] })
+    const g = bySource.get(key)
+    g.installed.add(path.posix.dirname(e.skillPath))
+    g.names.push(name)
+  }
+
+  // A reference is satisfied by ANY installed skill of that name, whatever source it came
+  // from. Checking per-source reported firecrawl-developer-index and firecrawl-research-index
+  // as dangling for firecrawl/skills while both were installed from firecrawl/cli — two false
+  // positives out of three hits on the first run, which is the rate that makes a check ignorable.
+  const installedAnywhere = new Set(rows.map(([name]) => name))
+
+  const out = []
+  for (const { source, parent, installed, names } of bySource.values()) {
+    const tree = await repoTree(source)
+    if (!tree) continue
+    // A directory is a skill iff it holds a SKILL.md — the same rule the linking loop uses.
+    const upstream = tree
+      .filter((t) => t.type === 'blob' && t.path.endsWith('/SKILL.md'))
+      .map((t) => path.posix.dirname(t.path))
+      .filter((d) => path.posix.dirname(d) === parent)
+    const missing = [...new Set(upstream)].filter((d) => !installed.has(d))
+    if (!missing.length || !skillsDir) continue
+
+    const texts = await Promise.all(
+      names.map((n) => readFile(path.join(skillsDir, n, 'SKILL.md'), 'utf8').catch(() => '')),
+    )
+    for (const dir of missing.sort()) {
+      const base = path.posix.basename(dir)
+      if (installedAnywhere.has(base)) continue
+      const referrers = names.filter((_, i) => texts[i].includes(base))
+      if (!referrers.length) continue
+      out.push({
+        name: base,
+        class: 'cli-managed',
+        repo: source,
+        status: 'missing',
+        detail: `referenced by ${referrers.slice(0, 3).join(', ')}${referrers.length > 3 ? ` +${referrers.length - 3}` : ''} but NOT installed · npx skills add ${source} -g -s ${base} -y`,
+      })
+    }
+  }
+  return out
 }
 
 /**
@@ -750,6 +821,7 @@ function bannerLine(cache) {
   if (!s) return null
   const bits = []
   if (s.behind) bits.push(`${s.behind} behind upstream`)
+  if (s.missing) bits.push(`${s.missing} referenced or declared but not installed`)
   if (s.unlinked) bits.push(`${s.unlinked} in the repo but not linked here`)
   if (s.checkoutBehind) bits.push('skills checkout behind origin')
   if (!bits.length) return null
@@ -865,6 +937,11 @@ async function collect() {
   const rows = [...vendored, ...cliManaged, ...activeInstalled]
   const summary = {
     behind: rows.filter((r) => r.status === 'behind').length,
+    // `missing` covers both "declared in the manifest but not installed" and
+    // "referenced by an installed skill but not installed". It was rendered as ✗ but
+    // counted nowhere, so the summary could read all-clear with ✗ rows above it —
+    // and the summary is what the banner reads.
+    missing: rows.filter((r) => r.status === 'missing').length,
     undeterminable: rows.filter((r) => r.status === 'unknown').length,
     unlinked: notLinked.length,
     unattributed: unaccounted.length,
@@ -958,7 +1035,7 @@ function render(result, ctx) {
 
   out.push(
     '',
-    `SUMMARY: ${summary.behind} behind · ${summary.undeterminable} undeterminable · ${summary.unlinked} unlinked · ${summary.unattributed} unattributed`,
+    `SUMMARY: ${summary.behind} behind · ${summary.missing} missing · ${summary.undeterminable} undeterminable · ${summary.unlinked} unlinked · ${summary.unattributed} unattributed`,
   )
   out.push('This command changes nothing. Run the per-row fix commands yourself.')
   return out.join('\n')
