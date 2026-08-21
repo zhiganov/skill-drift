@@ -5,7 +5,7 @@
  * Answers: what skills are active, where did each come from, and is any of them behind?
  *
  * READ-ONLY BY CONSTRUCTION. It never installs or updates a skill. That is the whole point:
- * `npx skills check` and `npx impeccable update` both APPLY updates on the spot, so neither
+ * `npx skills update -g` and `npx impeccable update` both APPLY updates on the spot, so neither
  * can be used to decide whether to nag. This reports; you apply.
  *
  * The one thing it DOES write is the banner cache (roots.cache), on every run including
@@ -386,8 +386,13 @@ async function checkAgentsLock(lockPath, skillsDir) {
       name,
       class: 'cli-managed',
       repo: e.source,
-      update: 'npx skills check',
-      warn: '`npx skills check` APPLIES updates — it is not a dry run',
+      // `npx skills check` is NOT a command in that CLI's usage. It resolves to a
+      // PROJECT-scoped update, prints "No project skills to update", and exits 0 —
+      // while these skills live in the GLOBAL lock at ~/.agents/. Following the old
+      // line looked like success and changed nothing, so eight skills sat behind for
+      // days (2026-08-21). `-g` is the whole fix.
+      update: 'npx skills update -g',
+      warn: '`npx skills update -g` APPLIES updates — it is not a dry run',
     }
     if (!e.source || !e.skillPath) {
       return { ...base, status: 'unknown', detail: 'lock entry has no source/skillPath' }

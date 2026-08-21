@@ -62,7 +62,7 @@ rather than adding a new matcher block, and **snapshot the file first**. Changes
 **This command reports. It never applies.** Do not run any `fix:` line from the output unless the
 user asks for that specific one. Two of them are actively dangerous to run reflexively:
 
-- `npx skills check` **applies** every update it finds. It is not a dry run.
+- `npx skills update -g` **applies** every update it finds. It is not a dry run. **Note the `-g`**: these skills live in the global lock at `~/.agents/`, and without it the CLI updates *project* scope, reports "No project skills to update", and exits 0 — success-shaped and useless. This file said `npx skills check` until 2026-08-21, which is not a command in that CLI at all; eight skills sat behind for days because following the instruction looked like it had worked.
 - `npx impeccable update --help` is not help — **`--help` is unrecognised and the command
   executes**. So does `install --help`, which writes a project-scoped copy plus two hooks into
   `settings.local.json`. Probe unfamiliar CLIs with `<tool> help`, never `<tool> --help`.
@@ -75,7 +75,7 @@ Five sections, one per install mechanism, because they fail in different ways:
 |---|---|---|
 | Own checkout | your skills repo is behind origin on `skills/` | `git pull` |
 | Vendored by hand | The pinned copy differs from upstream | Re-vendor; check the `NOTICE-*.md` |
-| CLI-managed | Upstream committed to that skill's folder since install | `npx skills check` (applies!) |
+| CLI-managed | Upstream committed to that skill's folder since install | `npx skills update -g` (applies!) |
 | Installed locally | npm/git-repo skill version differs from upstream | Per-row `fix:` line |
 | Linkage | In the repo but never junctioned, or active with no provenance | Junction it, or add a manifest entry |
 
