@@ -191,6 +191,32 @@ async function repoDirSha(repo, dir, ref = 'HEAD') {
 }
 
 /**
+ * Where a folder with this exact tree sha lives NOW.
+ *
+ * Upstream reorganisations move skills without changing them: firecrawl filed every skill into
+ * `skills/build/` and `skills/core/` on 2026-08-24, byte-identical either side of the move. The
+ * recorded path then 404s and the commit-count fallback below counts the commits that touched it
+ * — one of which IS the move — so a pure rename reads as staleness.
+ *
+ * The nastier half is that it does not even fail consistently. Whether a vanished path reports
+ * behind or current depends on the install date: firecrawl-build-interact (installed 2026-04-14,
+ * before the move) counted one commit and reported behind, while firecrawl-build (installed
+ * 2026-08-21, after it) counted zero and reported a GREEN TICK for a path that no longer exists.
+ * Same condition, opposite verdicts, decided by a date.
+ *
+ * `skillFolderHash` is an exact content identity, so ask the tree where that content lives now
+ * instead of asking whether the old address still resolves.
+ *
+ * Returns the new path, `null` when nothing upstream matches the hash, or `undefined` when the
+ * tree could not be fetched — which must not be read as "not found".
+ */
+async function repoDirByHash(repo, sha, ref = 'HEAD') {
+  const t = await repoTree(repo, ref)
+  if (!t) return undefined
+  return t.find((e) => e.type === 'tree' && e.sha === sha)?.path ?? null
+}
+
+/**
  * Upstream files the local copy is missing.
  *
  * The content compare elsewhere in this file looks at ONE file — entry.path, nearly always
@@ -420,6 +446,25 @@ async function checkAgentsLock(lockPath, skillsDir) {
         })
         return withCompleteness(row, gap, e.source, path.posix.basename(e.skillPath), 'upstream unchanged since install')
       }
+
+      // The recorded path is gone upstream. Find the folder by its content identity before
+      // falling through to a commit count, which reads the deletion commit as staleness.
+      const moved = await repoDirByHash(e.source, e.skillFolderHash)
+      if (moved) {
+        return {
+          ...base,
+          status: 'current',
+          detail: `moved upstream to ${moved} — content identical (${short(e.skillFolderHash)})`,
+        }
+      }
+      if (moved === null) {
+        return {
+          ...base,
+          status: 'behind',
+          detail: `${dir} no longer exists upstream and no folder matches the installed hash — moved with changes, or removed`,
+        }
+      }
+      // moved === undefined: the tree could not be fetched. Fall through rather than guess.
     }
 
     const r = await commitsFor(e.source, dir, since)
