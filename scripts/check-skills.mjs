@@ -35,7 +35,7 @@ import { spawn } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import path from 'node:path'
 
-import { sh, exists, resolvePath, normalize, pool, resolveToken, makeGh } from './lib/skills-lib.mjs'
+import { sh, exists, resolvePath, normalize, normalizeProviderTemplating, pool, resolveToken, makeGh } from './lib/skills-lib.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 
@@ -622,7 +622,7 @@ const short = (sha) => String(sha ?? '').slice(0, 7)
  * it hashes the bytes the vendor wrote — and wrong here: a copy that landed via a CRLF checkout
  * is the same skill, and comparing raw bytes reports a divergence that does not exist.
  */
-async function skillFiles(dir) {
+async function skillFiles(dir, { crossRoot = false } = {}) {
   const rels = []
   const walk = async (rel) => {
     let entries
@@ -644,7 +644,13 @@ async function skillFiles(dir) {
     const abs = path.join(dir, rel)
     const body = await readFile(abs, 'utf8').catch(() => null)
     if (body === null) return null // unreadable file — cannot claim the copies agree
-    out.set(rel.replace(/\\/g, '/'), { abs, hash: createHash('sha256').update(normalize(body)).digest('hex') })
+    // crossRoot only: comparing the SAME install across agent-tool roots, where the vendor's own
+    // per-provider rewrites are expected. Never applied against upstream — there the rewrite IS
+    // the difference worth seeing.
+    const canon = crossRoot
+      ? normalizeProviderTemplating(normalize(body), path.basename(dir))
+      : normalize(body)
+    out.set(rel.replace(/\\/g, '/'), { abs, hash: createHash('sha256').update(canon).digest('hex') })
   }
   return out
 }
@@ -868,7 +874,7 @@ function bannerLine(cache) {
   if (s.behind) bits.push(`${s.behind} behind upstream`)
   if (s.missing) bits.push(`${s.missing} referenced or declared but not installed`)
   if (s.unlinked) bits.push(`${s.unlinked} in the repo but not linked here`)
-  if (s.checkoutBehind) bits.push('skills checkout behind origin')
+  if (s.checkoutBehind) bits.push('a skills checkout is behind origin')
   if (!bits.length) return null
   return `⚠ Skills: ${bits.join(', ')} — run /check-skills  (checked ${String(cache.checkedAt).slice(0, 10)})`
 }
@@ -895,12 +901,28 @@ async function collect() {
   // .config/opencode, …), so a root we do not scan is a copy that can drift unseen — #63.
   const extraRoots = (roots.extraSkills ?? []).map((r) => resolvePath(r, manifestDir)).filter(Boolean)
 
-  const [ownSkills, active, agentsOnDisk, ownCheckout, extraOnDisk] = await Promise.all([
+  // A skills root that is a SEPARATE GIT CLONE fails differently from a copied directory: the
+  // files are all present and correct-looking, they are just old. A directory scan cannot see
+  // that, so scanning it reports green while the agent reading it runs week-old skills.
+  // 2026-08-27: OpenCode's `skills` key in opencode.jsonc points at a second clone of the skills repo,
+  // which sat 8 commits behind with a clean tree while this report said "up to date" — about
+  // the OTHER checkout. Clone-backed roots need the freshness check, not the file scan.
+  const extraCheckouts = (roots.extraCheckouts ?? []).filter((c) => c && c.repo)
+
+  const [ownSkills, active, agentsOnDisk, ownCheckout, extraOnDisk, checkouts] = await Promise.all([
     realSkills(ownSkillsDir),
     inspectSkillsDir(activeDir),
     agentsSkillsDir ? realSkills(agentsSkillsDir) : [],
     checkOwnCheckout(roots.own ?? {}, manifestDir),
     Promise.all(extraRoots.map(async (root) => ({ root, names: await realSkills(root) }))),
+    Promise.all(
+      extraCheckouts.map(async (c) => ({
+        label: c.label ?? path.basename(resolvePath(c.repo, manifestDir)),
+        dir: resolvePath(c.repo, manifestDir),
+        why: c.why ?? '',
+        ...(await checkOwnCheckout(c, manifestDir)),
+      })),
+    ),
   ])
 
   const activeByName = new Map(active.map((a) => [a.name, a]))
@@ -959,8 +981,12 @@ async function collect() {
   if (agentsSkillsDir) noteRoot(agentsSkillsDir, agentsOnDisk)
   for (const { root, names } of extraOnDisk) noteRoot(root, names)
   const duplicated = await pool([...rootsByName].filter(([, rs]) => rs.length > 1), 4, async ([name, rs]) => {
-    const differs = differingPaths(await pool(rs, 4, (r) => skillFiles(path.join(r, name))))
-    return { name, roots: rs, agree: differs.length === 0, differs }
+    const differs = differingPaths(await pool(rs, 4, (r) => skillFiles(path.join(r, name), { crossRoot: true })))
+    // `providerTemplated` in the manifest says this vendor templates PROSE per harness, not just
+    // paths — so residual divergence here is the install working as designed. It reclassifies the
+    // row rather than hiding it: the files are still named, under ? instead of ⚠. Like `forkOmits`
+    // it silences a real signal, so declare it only after reading the diff, never to quiet a row.
+    return { name, roots: rs, agree: differs.length === 0, differs, templated: !!entries[name]?.providerTemplated }
   })
   // Real in some other harness's root (.agents, .factory, .config/opencode, …) and absent from the
   // active dir entirely — so Claude Code never loads it. Not drift and not a duplicate: a skill
@@ -990,7 +1016,7 @@ async function collect() {
     undeterminable: rows.filter((r) => r.status === 'unknown').length,
     unlinked: notLinked.length,
     unattributed: unaccounted.length,
-    checkoutBehind: ownCheckout.status === 'behind',
+    checkoutBehind: ownCheckout.status === 'behind' || checkouts.some((c) => c.status === 'behind'),
   }
 
   const result = {
@@ -998,6 +1024,7 @@ async function collect() {
     authenticated: Boolean(TOKEN),
     summary,
     ownCheckout,
+    checkouts,
     vendored,
     cliManaged,
     activeInstalled,
@@ -1020,7 +1047,7 @@ async function collect() {
 
 function render(result, ctx) {
   const { manifest, manifestPath, roots, ownRepoDir, ownSkillsDir, activeDir, agentsLock } = ctx
-  const { ownCheckout, vendored, cliManaged, activeInstalled, summary } = result
+  const { ownCheckout, checkouts = [], vendored, cliManaged, activeInstalled, summary } = result
   const { notLinked, unaccounted, duplicated, elsewhereOnly = [] } = result.linkage
 
   // Local date, not the ISO/UTC one — a UTC header reads as yesterday for most of a CET evening.
@@ -1031,6 +1058,17 @@ function render(result, ctx) {
   out.push(`  ${MARK[ownCheckout.status] ?? '?'} ${ownCheckout.detail}`)
   if (ownCheckout.uncommitted > 0) {
     out.push(`  ⚠ ${ownCheckout.uncommitted} uncommitted change(s) under ${roots.own?.skillsSubdir ?? 'skills'}/`)
+  }
+
+  // Separate section, not folded into OWN CHECKOUT: these are other clones of this repo that an
+  // agent loads skills from. Their files always look right; only the commit count betrays them.
+  if (checkouts.length) {
+    out.push('', 'OTHER CHECKOUTS — separate clones an agent loads skills from')
+    for (const c of checkouts) {
+      out.push(`  ${MARK[c.status] ?? '?'} ${pad(c.label, Math.max(...checkouts.map((x) => x.label.length)))}  ${c.detail}`)
+      if (c.why) out.push(`      ${c.why}`)
+      if (c.uncommitted > 0) out.push(`      ⚠ ${c.uncommitted} uncommitted change(s) there`)
+    }
   }
 
   section(`VENDORED BY HAND — pinned copy vs upstream`, vendored, out)
@@ -1048,8 +1086,17 @@ function render(result, ctx) {
     out.push(`  ? active with no recorded provenance: ${unaccounted.join(', ')}`)
     out.push(`    fix: add an entry to ${path.relative(ownRepoDir, manifestPath).replace(/\\/g, '/')}`)
   }
-  const diverged = duplicated.filter((d) => !d.agree)
+  const diverged = duplicated.filter((d) => !d.agree && !d.templated)
+  const templated = duplicated.filter((d) => !d.agree && d.templated)
   const agreeing = duplicated.filter((d) => d.agree)
+  if (templated.length) {
+    out.push('  ? copies differ only in per-harness content the vendor writes deliberately (declared):')
+    for (const d of templated) {
+      const shown = d.differs.slice(0, 3).join(', ')
+      const more = d.differs.length > 3 ? ` (+${d.differs.length - 3} more)` : ''
+      out.push(`    ${d.name} — ${d.differs.length} file(s): ${shown}${more}`)
+    }
+  }
   if (diverged.length) {
     out.push('  ⚠ separate copies in more than one root, and their contents differ:')
     for (const d of diverged) {

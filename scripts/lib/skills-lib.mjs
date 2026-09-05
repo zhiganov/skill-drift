@@ -44,6 +44,38 @@ export const normalize = (text) =>
   String(text).replace(/\r\n?/g, '\n').replace(/[ \t]+$/gm, '').trim()
 
 /**
+ * The skill roots a vendor CLI fans one install out to. `npx impeccable update` writes ten of
+ * these in a single run; `railway setup agent` writes four.
+ */
+export const PROVIDER_SKILL_ROOTS = [
+  '.claude', '.agents', '.hermes', '.kiro', '.pi/agent', '.qoder',
+  '.trae', '.trae-cn', '.rovodev', '.vibe', '.factory', '.config/opencode',
+]
+
+/**
+ * Neutralise the per-provider templating a vendor applies while installing the SAME skill version
+ * into each agent tool's root, so a cross-root compare reports real drift rather than the rewrite.
+ *
+ * Two substitutions, both measured on impeccable v4.2.0 (2026-09-05), where they accounted for 19
+ * of the 32 differing files: the install path (`.claude/skills/…` vs `.agents/skills/…`), and the
+ * invocation prefix, which is `/verb` on a host with slash commands and `$verb` on one without.
+ *
+ * It deliberately does NOT try to neutralise everything. The same install also carries
+ * harness-specific PROSE — the `.agents` copy of impeccable's `critique.md` explains Codex's
+ * sub-agent permission gate, which is meaningless to Claude Code and absent from its copy. No
+ * rewrite rule reaches that; `providerTemplated` in the manifest is what declares it expected.
+ */
+export const normalizeProviderTemplating = (text, skillName) => {
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  let out = String(text)
+  for (const root of PROVIDER_SKILL_ROOTS) {
+    out = out.replace(new RegExp(`${esc(root)}([/\\\\]{1,2})skills`, 'g'), '<AGENT_ROOT>$1skills')
+  }
+  if (skillName) out = out.replace(new RegExp(`\\$(?=${esc(skillName)}\\b)`, 'g'), '/')
+  return out.replace(/\$(?=command-name\b)/g, '/').replace(/\$(?=<command>)/g, '/')
+}
+
+/**
  * Link a skill into the active skills dir.
  * On Windows this MUST be a junction: a plain symlink needs admin or Developer Mode, and the
  * failure mode is a silently-copied directory that then drifts. See reference_claude_config_commands_junction.

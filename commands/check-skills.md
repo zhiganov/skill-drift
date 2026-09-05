@@ -62,6 +62,13 @@ rather than adding a new matcher block, and **snapshot the file first**. Changes
 **This command reports. It never applies.** Do not run any `fix:` line from the output unless the
 user asks for that specific one. Two of them are actively dangerous to run reflexively:
 
+- **`npx skills update -g` reports a MOVED skill as deleted upstream.** It resolves each
+  skill at its recorded path, gets a 404 after an upstream reorganisation, and concludes the
+  skill is gone. On 2026-08-24 it announced five `firecrawl-build*` skills as "deleted
+  upstream" when all five were present at `skills/build/`, byte-identical. It skipped the
+  deletion only because the run was non-interactive — **interactively it would have offered
+  to remove five working skills.** Verify against the upstream tree before accepting any
+  deletion prompt from it.
 - `npx skills update -g` **applies** every update it finds. It is not a dry run. **Note the `-g`**: these skills live in the global lock at `~/.agents/`, and without it the CLI updates *project* scope, reports "No project skills to update", and exits 0 — success-shaped and useless. This file said `npx skills check` until 2026-08-21, which is not a command in that CLI at all; eight skills sat behind for days because following the instruction looked like it had worked.
 - `npx impeccable update --help` is not help — **`--help` is unrecognised and the command
   executes**. So does `install --help`, which writes a project-scoped copy plus two hooks into
@@ -79,13 +86,20 @@ Five sections, one per install mechanism, because they fail in different ways:
 | Installed locally | npm/git-repo skill version differs from upstream | Per-row `fix:` line |
 | Linkage | In the repo but never junctioned, or active with no provenance | Junction it, or add a manifest entry |
 
-Two verdicts are not failures and should not be reported as ones:
+Three verdicts are not failures and should not be reported as ones:
+
+- **`moved upstream to <path>`** — the recorded path is gone and a folder with the same
+  `skillFolderHash` was found elsewhere in the tree, so the content is byte-identical and
+  only its address changed. Nothing to do. Upstream reorganisations are routine: firecrawl
+  filed all seventeen of its skills into `skills/build/` and `skills/core/` on 2026-08-24.
 
 - **`?` undeterminable** — the check could not run (no recorded upstream, no version signal, or
   network off). It is a gap in provenance, not evidence of staleness. The fix is recording the
   source in the manifest, not updating anything.
 - **`fork, reconciled against …`** — a derivative that was deliberately rewritten. Its content
   will never match upstream; only an upstream *version* bump is a real signal.
+
+
 
 ## Vendoring a new skill
 
@@ -135,6 +149,7 @@ comparing one file and reporting a green tick regardless.
 | `installs` | vendored, git-repo | The upstream paths that make up the skill, relative to the upstream dir. **Required when the skill lives at a repo ROOT**, because it is then a subset of that root — `a git-repo skill` ships `SKILL.md` + `reference/` beside a README, LICENSE and `install.sh`, and comparing root-to-root reports the repo's own furniture as missing. Omit it when the skill owns its own subdirectory; the whole subtree is used. |
 | `forkOmits` | vendored + `derivative` | Upstream paths a fork deliberately does not carry as files. `writing-prose` inlines upstream's eight `references/` into one `SKILL.md`, so it declares `["references/"]`. Set this only once the content genuinely matches — it silences the warning, so setting it early buries the gap it exists to reveal. |
 | `upstream.tagPattern` | npm | Release-tag template, e.g. `skill-v{version}`. Without it the install is compared against repo HEAD, which fails whenever a maintainer commits between releases: impeccable reported five differing files that were commits made 13 hours *after* the npm publish it was installed from. `{version}` is substituted with the installed skill version. |
+| `providerTemplated` | any multi-root install | Declares that this vendor templates per-harness PROSE, not just paths, so residual cross-root divergence is the install working as designed. The row moves from ⚠ to ?, still naming the files. The check already normalises the mechanical rewrites on its own — install paths (`.claude/skills/…` vs `.agents/skills/…`) and the invocation prefix (`/verb` vs `$verb`) — which on impeccable v4.2.0 cleared 19 of 32 differing files. The remaining 13 are genuinely different text: the `.agents` copy of `critique.md` carries a Codex sub-agent permission gate that is meaningless to Claude Code. Like `forkOmits` it silences a real signal, so set it only after reading the diff. |
 
 A root-level entry with no `installs` is not silently trusted — its row says `(SKILL.md only —
 install set not declared)` rather than implying the whole skill was verified.
