@@ -867,6 +867,19 @@ function spawnRefresh() {
  * ("undeterminable", "unattributed") are real but permanent-ish, and a banner that fires on a
  * healthy machine every single session is a banner that gets ignored.
  */
+/**
+ * One clause naming which clones are behind. The single case reads as a sentence; past that,
+ * repeating "skills checkout" per clone makes a one-line banner unreadable, so the names
+ * go in a list. The banner must stay one line — that is the whole reason it gets read.
+ */
+function phraseClones(labels) {
+  if (labels.length > 1) return `${labels.length} skills checkouts behind origin (${labels.join(', ')})`
+  const l = labels[0]
+  return l === 'this'
+    ? 'this skills checkout is behind origin'
+    : `the ${l} skills checkout is behind origin`
+}
+
 function bannerLine(cache) {
   const s = cache?.summary
   if (!s) return null
@@ -874,7 +887,14 @@ function bannerLine(cache) {
   if (s.behind) bits.push(`${s.behind} behind upstream`)
   if (s.missing) bits.push(`${s.missing} referenced or declared but not installed`)
   if (s.unlinked) bits.push(`${s.unlinked} in the repo but not linked here`)
-  if (s.checkoutBehind) bits.push('a skills checkout is behind origin')
+  // A cache written before checkoutsBehind existed carries only the boolean; fall back to the
+  // old indefinite wording rather than going silent on a state that is still true.
+  const clones = s.checkoutsBehind
+  if (Array.isArray(clones)) {
+    if (clones.length) bits.push(phraseClones(clones))
+  } else if (s.checkoutBehind) {
+    bits.push('a skills checkout is behind origin')
+  }
   if (!bits.length) return null
   return `⚠ Skills: ${bits.join(', ')} — run /check-skills  (checked ${String(cache.checkedAt).slice(0, 10)})`
 }
@@ -1016,6 +1036,16 @@ async function collect() {
     undeterminable: rows.filter((r) => r.status === 'unknown').length,
     unlinked: notLinked.length,
     unattributed: unaccounted.length,
+    // Named, not a boolean. Three clones of this repo live on this machine and they are not
+    // equally urgent: THIS one being behind means the skills running right now are stale, while a
+    // sibling means another harness's are. The banner ORed them into one indefinite sentence
+    // ("a skills checkout"), which on 2026-09-20 was read as this checkout when it was
+    // actually the OpenCode one — a day of the wrong urgency. Carry the labels so the banner can
+    // say which. `checkoutBehind` is retained for caches written before this change.
+    checkoutsBehind: [
+      ...(ownCheckout.status === 'behind' ? ['this'] : []),
+      ...checkouts.filter((c) => c.status === 'behind').map((c) => c.label),
+    ],
     checkoutBehind: ownCheckout.status === 'behind' || checkouts.some((c) => c.status === 'behind'),
   }
 
