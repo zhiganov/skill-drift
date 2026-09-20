@@ -84,6 +84,11 @@
       "note": "Authored here, no upstream. Checked only by the own-checkout git comparison. Note that absence of an entry defaults to this too — which means 'no upstream recorded' and 'no upstream exists' are currently indistinguishable."
     }
   },
+  "harnessManaged": {
+    "note": "Directories the agent tool writes into roots.active itself, rather than anything here installing them. Claude Code keeps one named `synced`, holding its first-party skills under a UUID directory with its own manifest, refreshed from the server. There is no upstream to diff and no install to record, so listing the names here keeps them out of the provenance gap and prints this note instead of a permanent unattributed row.",
+    "names": ["synced"],
+    "checked": false
+  },
   "marketplace": {
     "note": "Marketplace plugins self-heal on their own schedule. Deliberately not checked here.",
     "checked": false
