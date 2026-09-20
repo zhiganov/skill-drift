@@ -983,8 +983,14 @@ async function collect() {
   const notLinked = ownSkills.filter((n) => !activeByName.has(n))
   const declared = new Set(Object.keys(entries))
   const lockNames = new Set(cliManaged.map((r) => r.name))
+  // Directories the harness writes into the active root itself. `synced` is Claude Code's own
+  // bucket of Anthropic first-party skills: a UUID directory with its own manifest.json, pulled
+  // from the server and rewritten without anything here asking. It has no upstream this check
+  // could diff and no install step to record, so "active with no recorded provenance" is the
+  // wrong verdict — there is nothing to attribute. Same treatment as marketplace plugins.
+  const harnessManaged = new Set(manifest.harnessManaged?.names ?? [])
   const unaccounted = active
-    .filter((a) => !a.linked && !declared.has(a.name) && !lockNames.has(a.name))
+    .filter((a) => !a.linked && !declared.has(a.name) && !lockNames.has(a.name) && !harnessManaged.has(a.name))
     .map((a) => a.name)
   // Same skill name, real directory (not a junction), in more than one root — usually a vendor CLI
   // fanning out across every agent tool it detects (`railway setup agent` writes four).
@@ -1154,6 +1160,7 @@ function render(result, ctx) {
     out.push('  ✓ every skill is linked and accounted for')
   }
 
+  if (manifest.harnessManaged) out.push('', `HARNESS-MANAGED — ${manifest.harnessManaged.note}`)
   if (manifest.marketplace) out.push('', `MARKETPLACE — ${manifest.marketplace.note}`)
 
   out.push(
