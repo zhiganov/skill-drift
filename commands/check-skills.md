@@ -69,6 +69,16 @@ user asks for that specific one. Two of them are actively dangerous to run refle
   deletion only because the run was non-interactive — **interactively it would have offered
   to remove five working skills.** Verify against the upstream tree before accepting any
   deletion prompt from it.
+
+  **`skills@1.7.0` handles the move correctly**, observed 2026-09-20: it printed `Skill paths
+  changed; resolving via Git clone` and updated the same five in place, offering no deletion.
+  The warning stays because the version is not pinned — `npx` fetches whatever is current, and a
+  machine that has not run it in a while may still be on the old behaviour. What does not change
+  is the check itself: confirm the skill's content exists somewhere upstream before accepting a
+  deletion. On 2026-09-20 the report flagged `firecrawl-build-onboarding` as "no folder matches
+  the installed hash", which reads like removal and was not — the skill had moved AND changed, in
+  a different repo from the one its siblings live in, so the hash lookup found nothing. Check the
+  repo the lock names, not the one that looks obvious.
 - `npx skills update -g` **applies** every update it finds. It is not a dry run. **Note the `-g`**: these skills live in the global lock at `~/.agents/`, and without it the CLI updates *project* scope, reports "No project skills to update", and exits 0 — success-shaped and useless. This file said `npx skills check` until 2026-08-21, which is not a command in that CLI at all; eight skills sat behind for days because following the instruction looked like it had worked.
 - `npx impeccable update --help` is not help — **`--help` is unrecognised and the command
   executes**. So does `install --help`, which writes a project-scoped copy plus two hooks into
