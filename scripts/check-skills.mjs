@@ -1036,12 +1036,13 @@ async function collect() {
     undeterminable: rows.filter((r) => r.status === 'unknown').length,
     unlinked: notLinked.length,
     unattributed: unaccounted.length,
-    // Named, not a boolean. Three clones of this repo live on this machine and they are not
-    // equally urgent: THIS one being behind means the skills running right now are stale, while a
-    // sibling means another harness's are. The banner ORed them into one indefinite sentence
-    // ("a skills checkout"), which on 2026-09-20 was read as this checkout when it was
-    // actually the OpenCode one — a day of the wrong urgency. Carry the labels so the banner can
-    // say which. `checkoutBehind` is retained for caches written before this change.
+    // Named, not a boolean. A machine can hold several clones of this repo, one per agent tool,
+    // and they are not equally urgent: THIS one being behind means the skills running right now
+    // are stale, while a sibling means another harness's are. The banner ORed them into one
+    // indefinite sentence ("a skills checkout"), which on 2026-09-20 was read as this
+    // checkout when it was actually a sibling clone — a day of the wrong urgency. Carry the
+    // labels so the banner can say which. `checkoutBehind` is retained for caches written
+    // before this change.
     checkoutsBehind: [
       ...(ownCheckout.status === 'behind' ? ['this'] : []),
       ...checkouts.filter((c) => c.status === 'behind').map((c) => c.label),
