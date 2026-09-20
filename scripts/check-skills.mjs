@@ -796,12 +796,29 @@ async function checkOwnCheckout(own, manifestDir) {
   const n = behind.ok ? Number(behind.stdout.trim()) : NaN
   const uncommitted = dirty.ok ? dirty.stdout.trim().split('\n').filter(Boolean).length : 0
   if (!Number.isFinite(n)) return { status: 'unknown', detail: behind.stderr.trim() || 'rev-list failed', uncommitted }
+
+  // Which branch the checkout is actually ON. The staleness measure above is HEAD against
+  // `remote/branch` and is right either way, but the REMEDY is not: `git pull` updates whatever
+  // HEAD tracks. On a clone parked on a feature branch that is its own upstream, the pull
+  // succeeds, changes nothing, and the row keeps firing. That happened on 2026-09-20 — a clone
+  // 44 commits behind master sat on a long-merged feature branch, and following the printed fix
+  // line was a no-op. Name the park instead of printing a command that cannot work.
+  const head = await sh('git', ['-C', repo, 'rev-parse', '--abbrev-ref', 'HEAD'])
+  const on = head.ok ? head.stdout.trim() : null
+  const parked = on && on !== branch ? on : null
+  const fix = !parked
+    ? `run: git -C ${repo} pull`
+    : on === 'HEAD'
+      ? `detached HEAD, not ${branch} — a pull here does nothing; check out ${branch} first`
+      : `HEAD is on ${on}, not ${branch} — a pull updates ${on} and leaves ${sub}/ stale. ` +
+        `Finish or abandon ${on}, then: git -C ${repo} switch ${branch} && git -C ${repo} pull`
+
   return {
     status: n > 0 ? 'behind' : 'current',
     detail:
       n > 0
-        ? `${n} commit${n === 1 ? '' : 's'} on ${remote}/${branch} touch ${sub}/ — run: git -C ${repo} pull`
-        : `up to date with ${remote}/${branch}`,
+        ? `${n} commit${n === 1 ? '' : 's'} on ${remote}/${branch} touch ${sub}/ — ${fix}`
+        : `up to date with ${remote}/${branch}${parked ? ` (on ${parked}, not ${branch})` : ''}`,
     uncommitted,
   }
 }
