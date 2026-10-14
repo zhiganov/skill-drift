@@ -587,7 +587,7 @@ async function checkNpm(name, entry, skillDir) {
 }
 
 async function checkGitRepoSkill(name, entry, skillDir, manifestDir) {
-  const base = { name, class: 'git-repo', repo: entry.repo, update: entry.update }
+  const base = { name, class: 'git-repo', repo: entry.repo, update: entry.update, warn: entry.warn }
   const localPath = path.join(skillDir, entry.path ?? 'SKILL.md')
   if (!(await exists(localPath))) return { ...base, status: 'unknown', detail: 'installed copy missing' }
   const local = await readFile(localPath, 'utf8')
