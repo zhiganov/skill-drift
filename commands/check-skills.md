@@ -148,6 +148,12 @@ directories in `~/.claude/skills` by some other tool (`location: "active"` plus 
 If the report shows a name under "active with no recorded provenance", that is the manifest asking
 to be filled in.
 
+A repo skill written for another agent tool only gets `"harnesses": [...]` (e.g. `["codex"]`).
+Leaving `claude-code` out of that list means the skill is meant to stay unlinked here: it drops out
+of the "in repo but NOT active" warning and the banner count, and shows as `✓ unlinked by design`.
+If it gets linked anyway, the report warns, because the usual reason for the field is a name clash
+with a Claude Code command (`digest-links`, 2026-11-09).
+
 ### Fields that scope the completeness check
 
 The check verifies the whole install, not just `SKILL.md`. Three optional fields tell it what

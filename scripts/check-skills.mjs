@@ -997,7 +997,19 @@ async function collect() {
   const cliManaged = agentsLock ? await checkAgentsLock(agentsLock, agentsSkillsDir) : []
 
   // Linkage gaps — the class of drift no upstream check can see.
-  const notLinked = ownSkills.filter((n) => !activeByName.has(n))
+  // `harnesses` on a manifest entry names the agent tools a repo skill is written for. One that
+  // omits 'claude-code' is meant to stay unlinked here, so leaving it out of the active dir is the
+  // design, not a gap. `digest-links` was the first case (2026-11-09): a Codex port of the
+  // /digest-links command, where linking it would put a same-named skill beside that command.
+  // Linking one anyway is reported, because that name clash is the reason the field exists.
+  const forOtherHarness = (n) => {
+    const h = entries[n]?.harnesses
+    return Array.isArray(h) && !h.includes('claude-code')
+  }
+  const notLinked = ownSkills.filter((n) => !activeByName.has(n) && !forOtherHarness(n))
+  const otherHarness = ownSkills
+    .filter(forOtherHarness)
+    .map((n) => ({ name: n, harnesses: entries[n].harnesses, linked: activeByName.has(n) }))
   const declared = new Set(Object.keys(entries))
   const lockNames = new Set(cliManaged.map((r) => r.name))
   // Directories the harness writes into the active root itself. `synced` is Claude Code's own
@@ -1084,6 +1096,7 @@ async function collect() {
     activeInstalled,
     linkage: {
       notLinked,
+      otherHarness,
       unaccounted,
       duplicated,
       elsewhereOnly,
@@ -1102,7 +1115,7 @@ async function collect() {
 function render(result, ctx) {
   const { manifest, manifestPath, roots, ownRepoDir, ownSkillsDir, activeDir, agentsLock } = ctx
   const { ownCheckout, checkouts = [], vendored, cliManaged, activeInstalled, summary } = result
-  const { notLinked, unaccounted, duplicated, elsewhereOnly = [] } = result.linkage
+  const { notLinked, otherHarness = [], unaccounted, duplicated, elsewhereOnly = [] } = result.linkage
 
   // Local date, not the ISO/UTC one — a UTC header reads as yesterday for most of a CET evening.
   const today = new Date().toLocaleDateString('sv-SE')
@@ -1135,6 +1148,16 @@ function render(result, ctx) {
     out.push(`  ⚠ in repo but NOT active (never linked on this machine): ${notLinked.join(', ')}`)
     out.push(`    fix (Windows): New-Item -ItemType Junction -Path "${path.join(activeDir, '<name>')}" -Target "${path.join(ownSkillsDir, '<name>')}"`)
     out.push(`    fix (POSIX):   ln -s "${path.join(ownSkillsDir, '<name>')}" "${path.join(activeDir, '<name>')}"`)
+  }
+  const fmtHarness = (o) => `${o.name} (${o.harnesses.join(', ')})`
+  const otherUnlinked = otherHarness.filter((o) => !o.linked)
+  const otherLinked = otherHarness.filter((o) => o.linked)
+  if (otherUnlinked.length) {
+    out.push(`  ✓ unlinked by design — declared for other harnesses only: ${otherUnlinked.map(fmtHarness).join(', ')}`)
+  }
+  if (otherLinked.length) {
+    out.push(`  ⚠ linked here although declared for other harnesses only: ${otherLinked.map(fmtHarness).join(', ')}`)
+    out.push(`    fix: remove the junction from ${activeDir}, or add "claude-code" to its manifest \`harnesses\``)
   }
   if (unaccounted.length) {
     out.push(`  ? active with no recorded provenance: ${unaccounted.join(', ')}`)
