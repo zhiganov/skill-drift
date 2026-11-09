@@ -586,10 +586,60 @@ async function checkNpm(name, entry, skillDir) {
   return withCompleteness(row, await missingUpstream(up, skillDir, { ref }), up.repo, path.posix.basename(up.path))
 }
 
+/**
+ * `"track": "release"` on a git-repo entry: the install deliberately follows PUBLISHED RELEASES,
+ * not the default branch. Comparing it to HEAD then answers the wrong question — any commit a
+ * maintainer lands between releases reads as "behind" forever, which is a false alarm the banner
+ * repeats every session. impact-to-funding was the first case (2026-11-09): pinned to v0.2.0 while
+ * main carried two unreleased SKILL.md lines.
+ *
+ * So: compare the installed release with the newest published one and check completeness
+ * against that tag, not HEAD. Drafts never count. `"track": "release"` counts stable releases
+ * only; `"track": "prerelease"` also counts prereleases — needed for ItF, whose every release is
+ * flagged prerelease, so GitHub's `releases/latest` (stable only) answers 404 for it.
+ * The installed release is read from the clone's own git (`describe --exact-match`); a copy with
+ * no .git, or one sitting between tags, falls back to a content match against the latest tag.
+ */
+async function checkGitRepoRelease(base, entry, skillDir, localPath) {
+  const rel = await gh(`repos/${entry.repo}/releases?per_page=30`)
+  if (!rel.ok) return { ...base, status: 'unknown', detail: `releases: ${rel.reason}` }
+  const withPre = entry.track === 'prerelease'
+  const published = rel.data
+    .filter((r) => !r.draft && (withPre || !r.prerelease))
+    .sort((a, b) => Date.parse(b.published_at) - Date.parse(a.published_at))
+  if (!published.length) {
+    return { ...base, status: 'unknown', detail: `no published ${withPre ? '' : 'stable '}release${withPre ? '' : ' (prereleases ignored — use "track": "prerelease")'}` }
+  }
+  const latest = published[0].tag_name
+  let installed = null
+  if (await exists(path.join(skillDir, '.git'))) {
+    const d = await sh('git', ['-C', skillDir, 'describe', '--tags', '--exact-match', 'HEAD'])
+    if (d.ok) installed = d.stdout.trim()
+  }
+  if (installed && installed !== latest) {
+    return { ...base, status: 'behind', detail: `installed release ${installed} → latest ${latest}` }
+  }
+  const up = await upstreamFile(entry.repo, entry.path ?? 'SKILL.md', latest)
+  if (!up.ok) return { ...base, status: 'unknown', detail: `${latest}: ${up.reason}` }
+  const local = await readFile(localPath, 'utf8')
+  if (normalize(local) !== normalize(up.data)) {
+    return {
+      ...base,
+      status: 'behind',
+      detail: installed
+        ? `at ${installed} but ${path.basename(localPath)} differs from that tag — locally modified`
+        : `${path.basename(localPath)} matches no release; latest is ${latest}`,
+    }
+  }
+  const row = { ...base, status: 'current', detail: `at latest release ${latest} (tracking releases, not HEAD)` }
+  return withCompleteness(row, await missingUpstream(entry, skillDir, { ref: latest }), entry.repo, path.basename(localPath))
+}
+
 async function checkGitRepoSkill(name, entry, skillDir, manifestDir) {
   const base = { name, class: 'git-repo', repo: entry.repo, update: entry.update, warn: entry.warn }
   const localPath = path.join(skillDir, entry.path ?? 'SKILL.md')
   if (!(await exists(localPath))) return { ...base, status: 'unknown', detail: 'installed copy missing' }
+  if (entry.track === 'release' || entry.track === 'prerelease') return checkGitRepoRelease(base, entry, skillDir, localPath)
   const local = await readFile(localPath, 'utf8')
   const up = await upstreamFile(entry.repo, entry.path ?? 'SKILL.md')
   if (!up.ok) return { ...base, status: 'unknown', detail: up.reason }

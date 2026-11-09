@@ -154,6 +154,14 @@ of the "in repo but NOT active" warning and the banner count, and shows as `✓ 
 If it gets linked anyway, the report warns, because the usual reason for the field is a name clash
 with a Claude Code command (`digest-links`, 2026-11-09).
 
+A `git-repo` install pinned to a published release gets `"track": "release"` (stable releases
+only) or `"track": "prerelease"` (prereleases count too). The row then compares the clone's own
+release tag with the newest published one, and checks completeness against that tag, instead of
+diffing against the default branch — where every commit made between releases would read as
+"behind". A copy that differs from its own tag reports as locally modified. First use:
+`impact-to-funding` (2026-11-09), whose releases are all prereleases, so GitHub's
+`releases/latest` endpoint returns 404 for it.
+
 ### Fields that scope the completeness check
 
 The check verifies the whole install, not just `SKILL.md`. Three optional fields tell it what
